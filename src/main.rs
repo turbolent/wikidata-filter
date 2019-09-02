@@ -8,9 +8,10 @@ use std::collections::HashSet;
 use std::time::Instant;
 use std::thread;
 use crossbeam_channel::{bounded, Receiver, Sender};
-use crate::Work::{DONE, LINE};
 use bzip2::write::BzEncoder;
 use bzip2::Compression;
+
+const BATCH_SIZE: u64 = 100;
 
 #[macro_use]
 extern crate lazy_static;
@@ -45,7 +46,7 @@ pub struct Statement<'a> {
 }
 
 pub enum Work {
-    LINE(u64, String),
+    LINES(u64, Vec<String>),
     DONE
 }
 
@@ -188,6 +189,8 @@ fn produce<T: Read>(reader: T, s: &Sender<Work>) -> u64 {
     let mut total = 0;
     let mut buf_reader = BufReader::new(reader);
 
+    let mut lines = Vec::new();
+
     loop {
         total += 1;
         let mut line = String::new();
@@ -195,7 +198,16 @@ fn produce<T: Read>(reader: T, s: &Sender<Work>) -> u64 {
             break
         }
 
-        s.send(LINE(total, line)).unwrap();
+        lines.push(line);
+
+        if total % BATCH_SIZE == 0 {
+            s.send(Work::LINES(total, lines)).unwrap();
+            lines = Vec::new();
+        }
+    }
+
+    if lines.len() > 0 {
+        s.send(Work::LINES(total, lines)).unwrap();
     }
 
     total
@@ -210,10 +222,12 @@ fn consume(id: usize, r: Receiver<Work>) {
 
     loop {
         match r.recv().unwrap() {
-            LINE(number, line) => {
-                handle(&mut encoder, number, line)
+            Work::LINES(number, lines) => {
+                for line in lines {
+                    handle(&mut encoder, number, line)
+                }
             }
-            DONE => {
+            Work::DONE => {
                 encoder.try_finish().unwrap();
                 return
             }
@@ -267,7 +281,7 @@ fn main() {
     produce(decoder, &s);
 
     for _ in &threads {
-        s.send(DONE).unwrap();
+        s.send(Work::DONE).unwrap();
     }
 
     for thread in threads {
