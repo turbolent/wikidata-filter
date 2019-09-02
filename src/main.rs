@@ -1,4 +1,4 @@
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, BufWriter, Write};
 use std::fs::File;
 use std::env;
 use std::io::BufReader;
@@ -6,6 +6,11 @@ use bzip2::bufread::BzDecoder;
 use regex::Regex;
 use std::collections::HashSet;
 use std::time::Instant;
+use std::thread;
+use crossbeam_channel::{bounded, Receiver, Sender};
+use crate::Work::{DONE, LINE};
+use bzip2::write::BzEncoder;
+use bzip2::Compression;
 
 #[macro_use]
 extern crate lazy_static;
@@ -39,7 +44,12 @@ pub struct Statement<'a> {
     object: Object<'a>
 }
 
-pub fn parse(line: usize, input: &str) -> Statement {
+pub enum Work {
+    LINE(u64, String),
+    DONE
+}
+
+pub fn parse(line: u64, input: &str) -> Statement {
     lazy_static! {
         static ref RE: Regex = Regex::new(r#"(?x)
             ^
@@ -171,7 +181,68 @@ fn line_set(data: &str) -> HashSet<&str> {
 }
 
 fn ignored_subject(iri: &str) -> bool {
-    return iri.starts_with("https://www.wikidata.org/wiki/Special:EntityData")
+    iri.starts_with("https://www.wikidata.org/wiki/Special:EntityData")
+}
+
+fn produce<T: Read>(reader: T, s: &Sender<Work>) -> u64 {
+    let mut total = 0;
+    let mut buf_reader = BufReader::new(reader);
+
+    loop {
+        total += 1;
+        let mut line = String::new();
+        if buf_reader.read_line(&mut line).unwrap() == 0 {
+            break
+        }
+
+        s.send(LINE(total, line)).unwrap();
+    }
+
+    total
+}
+
+fn consume(id: usize, r: Receiver<Work>) {
+    let path = format!("{}.nt.bz2", id);
+    let file = File::create(&path)
+        .expect(format!("unable to create file: {}", &path).as_str());
+    let mut encoder =
+        BzEncoder::new(BufWriter::new(file), Compression::Default);
+
+    loop {
+        match r.recv().unwrap() {
+            LINE(number, line) => {
+                handle(&mut encoder, number, line)
+            }
+            DONE => {
+                encoder.try_finish().unwrap();
+                return
+            }
+        }
+    }
+}
+
+fn handle<T: Write>(writer: &mut T, number: u64, line: String) {
+    let statement = parse(number, &line);
+
+    if PROPERTIES.contains(statement.predicate)
+        || IDENTIFIER_PROPERTIES.contains(statement.predicate)
+    {
+        return
+    }
+
+    match statement.subject {
+        Subject::Blank(_) => return,
+        Subject::IRI(iri) if ignored_subject(iri) => return,
+        _ => (),
+    }
+
+    match statement.object {
+        Object::Blank(_) => return,
+        Object::Literal(_, Extra::Lang(lang)) if !LANGUAGES.contains(lang) => return,
+        _ => (),
+    }
+
+    writer.write_all(&line.as_bytes()).unwrap();
 }
 
 fn main() {
@@ -182,64 +253,30 @@ fn main() {
         .expect("can't open file");
 
     let decoder = BzDecoder::new( BufReader::new(file));
-    let mut reader = BufReader::new(decoder);
-
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-
-    let mut kept = 0;
-    let mut total = 0;
 
     let start = Instant::now();
 
-    let mut line = String::new();
-    loop {
-        line.clear();
+    let (s, r) = bounded::<Work>(0);
 
-        if reader.read_line(&mut line).unwrap() <= 0 {
-            break
-        }
+    let mut threads = Vec::new();
+    for id in 1..=num_cpus::get() {
+        let r = r.clone();
+        threads.push(thread::spawn( move || { consume(id, r) }));
+    }
 
-        total += 1;
+    produce(decoder, &s);
 
-        let statement = parse(total, &line);
+    for _ in &threads {
+        s.send(DONE).unwrap();
+    }
 
-        if PROPERTIES.contains(statement.predicate) {
-            continue
-        }
-
-        if IDENTIFIER_PROPERTIES.contains(statement.predicate) {
-            continue
-        }
-
-        match statement.subject {
-            Subject::Blank(_) =>
-                continue,
-            Subject::IRI(iri) if ignored_subject(iri) =>
-                continue,
-            _ => (),
-        }
-
-        match statement.object {
-            Object::Literal(_, Extra::Lang(lang)) if !LANGUAGES.contains(lang) =>
-                continue,
-            _ => (),
-        }
-
-        out.write_all(&line.as_bytes()).unwrap();
-
-        kept += 1;
+    for thread in threads {
+        thread.join().unwrap();
     }
 
     // show duration
     let duration = start.elapsed();
-    writeln!(out, "# took {:?}", duration).unwrap();
-
-    // show count of triples kept
-    let percentage = ((kept as f64) * 100.0) / (total as f64);
-    writeln!(out, "# kept: {} / {} = {}", kept, total, percentage).unwrap();
-
-    out.flush().unwrap();
+    eprintln!("# took {:?}", duration);
 }
 
 #[cfg(test)]
