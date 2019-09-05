@@ -1,15 +1,15 @@
-use std::io::{BufRead, Read, BufWriter, Write};
-use std::fs::File;
-use std::env;
-use std::io::BufReader;
 use bzip2::bufread::BzDecoder;
-use regex::Regex;
-use std::collections::HashSet;
-use std::time::Instant;
-use std::thread;
-use crossbeam_channel::{bounded, Receiver, Sender};
 use bzip2::write::BzEncoder;
 use bzip2::Compression;
+use crossbeam_channel::{bounded, Receiver, Sender};
+use regex::Regex;
+use std::collections::HashSet;
+use std::env;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::{BufRead, BufWriter, Read, Write};
+use std::thread;
+use std::time::Instant;
 
 const BATCH_SIZE: u64 = 100;
 
@@ -22,37 +22,38 @@ extern crate lazy_static_include;
 pub enum Extra<'a> {
     None,
     Type(&'a str),
-    Lang(&'a str)
+    Lang(&'a str),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Subject<'a> {
     IRI(&'a str),
-    Blank(&'a str)
+    Blank(&'a str),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Object<'a> {
     IRI(&'a str),
     Blank(&'a str),
-    Literal(&'a str, Extra<'a>)
+    Literal(&'a str, Extra<'a>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Statement<'a> {
     subject: Subject<'a>,
     predicate: &'a str,
-    object: Object<'a>
+    object: Object<'a>,
 }
 
 pub enum Work {
     LINES(u64, Vec<String>),
-    DONE
+    DONE,
 }
 
 pub fn parse(line: u64, input: &str) -> Statement {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r#"(?x)
+        static ref RE: Regex = Regex::new(
+            r#"(?x)
             ^
             \s*
 
@@ -109,48 +110,44 @@ pub fn parse(line: u64, input: &str) -> Statement {
                 )?
               )
             )
-            "#).unwrap();
+            "#
+        )
+        .unwrap();
     }
-    let captures = RE.captures(input)
+    let captures = RE
+        .captures(input)
         .unwrap_or_else(|| panic!("Invalid line: {}: {:?}", line, input));
 
-    let subject = captures.get(1)
-        .map(|object| {
-            Subject::IRI(object.as_str())
-        })
-        .or_else(|| {
-            captures.get(2).map(|blank| {
-                Subject::Blank(blank.as_str())
-            })
-        })
+    let subject = captures
+        .get(1)
+        .map(|object| Subject::IRI(object.as_str()))
+        .or_else(|| captures.get(2).map(|blank| Subject::Blank(blank.as_str())))
         .expect("failed to parse subject");
 
     let predicate = captures.get(3).expect("failed to parse predicate").as_str();
 
-    let object = captures.get(4)
-        .map(|object| {
-            Object::IRI(object.as_str())
-        })
-        .or_else(|| {
-            captures.get(5).map(|blank| {
-                Object::Blank(blank.as_str())
-            })
-        })
+    let object = captures
+        .get(4)
+        .map(|object| Object::IRI(object.as_str()))
+        .or_else(|| captures.get(5).map(|blank| Object::Blank(blank.as_str())))
         .unwrap_or_else(|| {
             let literal = captures.get(6).expect("failed to parse object").as_str();
-            let extra = captures.get(7)
-                .map(|lang| {
-                    Extra::Lang(lang.as_str())
-                })
+            let extra = captures
+                .get(7)
+                .map(|lang| Extra::Lang(lang.as_str()))
                 .or_else(|| {
-                    captures.get(8).map(|data_type| {
-                        Extra::Type(data_type.as_str())
-                    })
+                    captures
+                        .get(8)
+                        .map(|data_type| Extra::Type(data_type.as_str()))
                 })
                 .unwrap_or(Extra::None);
             Object::Literal(literal, extra)
         });
-    Statement { subject, predicate, object }
+    Statement {
+        subject,
+        predicate,
+        object,
+    }
 }
 
 lazy_static_include_str!(PROPERTIES_DATA, "properties");
@@ -158,27 +155,25 @@ lazy_static_include_str!(IDENTIFIER_PROPERTIES_DATA, "identifier-properties");
 lazy_static_include_str!(LANGUAGES_DATA, "languages");
 
 lazy_static! {
-   static ref PROPERTIES: HashSet<&'static str> = line_set(&PROPERTIES_DATA);
+    static ref PROPERTIES: HashSet<&'static str> = line_set(&PROPERTIES_DATA);
 }
 
 lazy_static! {
-   static ref IDENTIFIER_PROPERTIES: HashSet<String> =
-       line_set(&IDENTIFIER_PROPERTIES_DATA)
-           .iter()
-           .flat_map(|id|
-               vec![
-                 format!("http://www.wikidata.org/prop/direct/P{}", id),
-                 format!("http://www.wikidata.org/prop/direct-normalized/P{}", id)
-               ])
-           .collect();
+    static ref IDENTIFIER_PROPERTIES: HashSet<String> = line_set(&IDENTIFIER_PROPERTIES_DATA)
+        .iter()
+        .flat_map(|id| vec![
+            format!("http://www.wikidata.org/prop/direct/P{}", id),
+            format!("http://www.wikidata.org/prop/direct-normalized/P{}", id)
+        ])
+        .collect();
 }
 
 lazy_static! {
-   static ref LANGUAGES: HashSet<&'static str> = line_set(&LANGUAGES_DATA);
+    static ref LANGUAGES: HashSet<&'static str> = line_set(&LANGUAGES_DATA);
 }
 
 fn line_set(data: &str) -> HashSet<&str> {
-   data.lines().collect()
+    data.lines().collect()
 }
 
 fn ignored_subject(iri: &str) -> bool {
@@ -192,11 +187,11 @@ fn produce<T: Read>(reader: T, s: &Sender<Work>) -> u64 {
     let mut lines = Vec::new();
 
     loop {
-        total += 1;
         let mut line = String::new();
         if buf_reader.read_line(&mut line).unwrap() == 0 {
-            break
+            break;
         }
+        total += 1;
 
         lines.push(line);
 
@@ -215,10 +210,8 @@ fn produce<T: Read>(reader: T, s: &Sender<Work>) -> u64 {
 
 fn consume(id: usize, r: Receiver<Work>) {
     let path = format!("{}.nt.bz2", id);
-    let file = File::create(&path)
-        .expect(format!("unable to create file: {}", &path).as_str());
-    let mut encoder =
-        BzEncoder::new(BufWriter::new(file), Compression::Default);
+    let file = File::create(&path).expect(format!("unable to create file: {}", &path).as_str());
+    let mut encoder = BzEncoder::new(BufWriter::new(file), Compression::Best);
 
     loop {
         match r.recv().unwrap() {
@@ -229,7 +222,7 @@ fn consume(id: usize, r: Receiver<Work>) {
             }
             Work::DONE => {
                 encoder.try_finish().unwrap();
-                return
+                return;
             }
         }
     }
@@ -238,35 +231,42 @@ fn consume(id: usize, r: Receiver<Work>) {
 fn handle<T: Write>(writer: &mut T, number: u64, line: String) {
     let statement = parse(number, &line);
 
-    if PROPERTIES.contains(statement.predicate)
-        || IDENTIFIER_PROPERTIES.contains(statement.predicate)
-    {
-        return
-    }
-
-    match statement.subject {
-        Subject::Blank(_) => return,
-        Subject::IRI(iri) if ignored_subject(iri) => return,
-        _ => (),
-    }
-
-    match statement.object {
-        Object::Blank(_) => return,
-        Object::Literal(_, Extra::Lang(lang)) if !LANGUAGES.contains(lang) => return,
-        _ => (),
+    if !is_acceptable(statement) {
+        return;
     }
 
     writer.write_all(&line.as_bytes()).unwrap();
 }
 
+fn is_acceptable(statement: Statement) -> bool {
+    if PROPERTIES.contains(statement.predicate)
+        || IDENTIFIER_PROPERTIES.contains(statement.predicate)
+    {
+        return false;
+    }
+    match statement.subject {
+        Subject::Blank(_) => return false,
+        Subject::IRI(iri) if ignored_subject(iri) => return false,
+        _ => (),
+    }
+    match statement.object {
+        Object::Blank(_) => return false,
+        Object::Literal(_, Extra::Lang(lang)) if !LANGUAGES.contains(lang) => return false,
+        // non-Earth geo coordinates are not supported by some triple stores
+        Object::Literal(
+            literal,
+            Extra::Type("http://www.opengis.net/ont/geosparql#wktLiteral"),
+        ) if literal.starts_with("<") => return false,
+        _ => (),
+    }
+
+    true
+}
+
 fn main() {
-    let path = env::args().nth(1)
-        .expect("missing path");
-
-    let file = File::open(&path)
-        .expect("can't open file");
-
-    let decoder = BzDecoder::new( BufReader::new(file));
+    if env::args().len() <= 1 {
+        panic!("missing paths");
+    }
 
     let start = Instant::now();
 
@@ -275,10 +275,18 @@ fn main() {
     let mut threads = Vec::new();
     for id in 1..=num_cpus::get() {
         let r = r.clone();
-        threads.push(thread::spawn( move || { consume(id, r) }));
+        threads.push(thread::spawn(move || consume(id, r)));
     }
 
-    produce(decoder, &s);
+    for path in env::args().skip(1) {
+        let file = File::open(&path).expect("can't open file");
+
+        let decoder = BzDecoder::new(BufReader::new(file));
+        eprintln!("# processing {}", path);
+
+        let count = produce(decoder, &s);
+        eprintln!("# processed {}: {}", path, count);
+    }
 
     for _ in &threads {
         s.send(Work::DONE).unwrap();
@@ -288,7 +296,6 @@ fn main() {
         thread.join().unwrap();
     }
 
-    // show duration
     let duration = start.elapsed();
     eprintln!("# took {:?}", duration);
 }
@@ -301,54 +308,75 @@ mod tests {
     fn test_literal_with_type() {
         let line =
             r#"<http://www.wikidata.org/entity/Q1644> <http://www.wikidata.org/prop/direct/P2043> "+1094.26"^^<http://www.w3.org/2001/XMLSchema#decimal> ."#;
-        assert_eq!(parse(1, line), Statement {
-            subject: Subject::IRI("http://www.wikidata.org/entity/Q1644"),
-            predicate: "http://www.wikidata.org/prop/direct/P2043",
-            object: Object::Literal("+1094.26", Extra::Type("http://www.w3.org/2001/XMLSchema#decimal"))
-        });
+        assert_eq!(
+            parse(1, line),
+            Statement {
+                subject: Subject::IRI("http://www.wikidata.org/entity/Q1644"),
+                predicate: "http://www.wikidata.org/prop/direct/P2043",
+                object: Object::Literal(
+                    "+1094.26",
+                    Extra::Type("http://www.w3.org/2001/XMLSchema#decimal")
+                )
+            }
+        );
     }
 
     #[test]
     fn test_literal_with_lang() {
-        let line =
-            r#"<http://www.wikidata.org/entity/Q177> <http://schema.org/name> "pizza"@en ."#;
-        assert_eq!(parse(1, line), Statement {
-            subject: Subject::IRI("http://www.wikidata.org/entity/Q177"),
-            predicate: "http://schema.org/name",
-            object: Object::Literal("pizza", Extra::Lang("en"))
-        });
+        let line = r#"<http://www.wikidata.org/entity/Q177> <http://schema.org/name> "pizza"@en ."#;
+        assert_eq!(
+            parse(1, line),
+            Statement {
+                subject: Subject::IRI("http://www.wikidata.org/entity/Q177"),
+                predicate: "http://schema.org/name",
+                object: Object::Literal("pizza", Extra::Lang("en"))
+            }
+        );
     }
 
     #[test]
     fn test_literal() {
         let line =
             r#"<http://www.wikidata.org/entity/Q177> <http://www.wikidata.org/prop/direct/P373> "Pizzas" ."#;
-        assert_eq!(parse(1, line), Statement {
-            subject: Subject::IRI("http://www.wikidata.org/entity/Q177"),
-            predicate: "http://www.wikidata.org/prop/direct/P373",
-            object: Object::Literal("Pizzas", Extra::None)
-        });
+        assert_eq!(
+            parse(1, line),
+            Statement {
+                subject: Subject::IRI("http://www.wikidata.org/entity/Q177"),
+                predicate: "http://www.wikidata.org/prop/direct/P373",
+                object: Object::Literal("Pizzas", Extra::None)
+            }
+        );
     }
 
     #[test]
     fn test_blank_subject() {
-        let line =
-            r#"_:foo <bar> <baz>"#;
-        assert_eq!(parse(1, line), Statement {
-            subject: Subject::Blank("foo"),
-            predicate: "bar",
-            object: Object::IRI("baz")
-        });
+        let line = r#"_:foo <bar> <baz>"#;
+        assert_eq!(
+            parse(1, line),
+            Statement {
+                subject: Subject::Blank("foo"),
+                predicate: "bar",
+                object: Object::IRI("baz")
+            }
+        );
     }
 
     #[test]
     fn test_blank_object() {
-        let line =
-            r#"<foo> <bar> _:baz"#;
-        assert_eq!(parse(1, line), Statement {
-            subject: Subject::IRI("foo"),
-            predicate: "bar",
-            object: Object::Blank("baz")
-        });
+        let line = r#"<foo> <bar> _:baz"#;
+        assert_eq!(
+            parse(1, line),
+            Statement {
+                subject: Subject::IRI("foo"),
+                predicate: "bar",
+                object: Object::Blank("baz")
+            }
+        );
+    }
+
+    #[test]
+    fn test_geo_literals() {
+        assert!(is_acceptable(parse(1, r#"<foo> <bar> "Point(4.6681 50.6411)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#)));
+        assert!(!is_acceptable(parse(1, r#"<foo> <bar> "<http://www.wikidata.org/entity/Q405> Point(-141.6 42.6)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#)));
     }
 }
