@@ -256,11 +256,15 @@ fn consume(name: String, r: Receiver<Work>, labels: bool) {
                     )
                 }
                 lines_encoder.flush().unwrap();
-                labels_encoder.as_mut().map(|it| it.flush().unwrap());
+                if let Some(labels_encoder) = labels_encoder.as_mut() {
+                    labels_encoder.flush().unwrap()
+                }
             }
             Work::DONE => {
                 lines_encoder.try_finish().unwrap();
-                labels_encoder.as_mut().map(|it| it.try_finish().unwrap());
+                if let Some(labels_encoder) = labels_encoder.as_mut() {
+                    labels_encoder.try_finish().unwrap()
+                }
             }
         }
     }
@@ -278,10 +282,12 @@ fn handle<T: Write, U: Write>(
         lines_writer.write_all(line.as_bytes()).unwrap();
     }
 
-    if let Some((iri, label)) = label(statement) {
-        labels_writer
-            .as_mut()
-            .map(|it| it.write_fmt(format_args!("{} {}\n", iri, label)).unwrap());
+    if let Some(labels_writer) = labels_writer.as_mut() {
+        if let Some((iri, label)) = label(statement) {
+            labels_writer
+                .write_fmt(format_args!("{} {}\n", iri, label))
+                .unwrap()
+        }
     }
 }
 
@@ -323,7 +329,7 @@ fn label(statement: Statement) -> Option<(&str, &str)> {
         }
     }
 
-    return None;
+    None
 }
 
 fn main() {
