@@ -1,7 +1,9 @@
 use bzip2::bufread::BzDecoder;
 use bzip2::write::BzEncoder;
 use bzip2::Compression;
+use clap::Clap;
 use crossbeam_channel::{bounded, Receiver, Sender};
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs::File;
@@ -9,8 +11,6 @@ use std::io::BufReader;
 use std::io::{BufRead, BufWriter, Read, Write};
 use std::thread;
 use std::time::Instant;
-use clap::Clap;
-use lazy_static::lazy_static;
 
 const BATCH_SIZE: u64 = 100;
 
@@ -22,7 +22,7 @@ extern crate lazy_static_include;
 struct Opts {
     #[clap(short, long)]
     labels: bool,
-    paths: Vec<String>
+    paths: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -228,13 +228,18 @@ fn produce<T: Read>(reader: T, s: &Sender<Work>) -> u64 {
 
 fn consume(name: String, r: Receiver<Work>, labels: bool) {
     let lines_path = format!("{}.nt.bz2", name);
-    let lines_file = File::create(&lines_path).unwrap_or_else(|_| panic!("unable to create file: {}", &lines_path));
+    let lines_file = File::create(&lines_path)
+        .unwrap_or_else(|_| panic!("unable to create file: {}", &lines_path));
     let mut lines_encoder = BzEncoder::new(BufWriter::new(lines_file), Compression::best());
 
     let mut labels_encoder = if labels {
         let labels_path = format!("labels_{}.bz2", name);
-        let labels_file = File::create(&labels_path).unwrap_or_else(|_| panic!("unable to create file: {}", &labels_path));
-        Some(BzEncoder::new(BufWriter::new(labels_file), Compression::best()))
+        let labels_file = File::create(&labels_path)
+            .unwrap_or_else(|_| panic!("unable to create file: {}", &labels_path));
+        Some(BzEncoder::new(
+            BufWriter::new(labels_file),
+            Compression::best(),
+        ))
     } else {
         None
     };
@@ -243,7 +248,12 @@ fn consume(name: String, r: Receiver<Work>, labels: bool) {
         match r.recv().unwrap() {
             Work::LINES(number, lines) => {
                 for line in lines {
-                    handle(&mut lines_encoder, &mut labels_encoder.as_mut(), number, line)
+                    handle(
+                        &mut lines_encoder,
+                        &mut labels_encoder.as_mut(),
+                        number,
+                        line,
+                    )
                 }
                 lines_encoder.flush().unwrap();
                 labels_encoder.as_mut().map(|it| it.flush().unwrap());
@@ -256,7 +266,12 @@ fn consume(name: String, r: Receiver<Work>, labels: bool) {
     }
 }
 
-fn handle<T: Write, U: Write>(lines_writer: &mut T, labels_writer: &mut Option<&mut U>, number: u64, line: String) {
+fn handle<T: Write, U: Write>(
+    lines_writer: &mut T,
+    labels_writer: &mut Option<&mut U>,
+    number: u64,
+    line: String,
+) {
     let statement = parse(number, &line);
 
     if is_acceptable(statement) {
@@ -264,12 +279,13 @@ fn handle<T: Write, U: Write>(lines_writer: &mut T, labels_writer: &mut Option<&
     }
 
     if let Some((iri, label)) = label(statement) {
-        labels_writer.as_mut().map(|it| it.write_fmt(format_args!("{} {}\n", iri, label)).unwrap());
+        labels_writer
+            .as_mut()
+            .map(|it| it.write_fmt(format_args!("{} {}\n", iri, label)).unwrap());
     }
 }
 
 fn is_acceptable(statement: Statement) -> bool {
-
     if PROPERTIES.contains(statement.predicate)
         || IDENTIFIER_PROPERTIES.contains(statement.predicate)
     {
@@ -294,9 +310,7 @@ fn is_acceptable(statement: Statement) -> bool {
     true
 }
 
-
 fn label(statement: Statement) -> Option<(&str, &str)> {
-
     if !LABELS.contains(statement.predicate) {
         return None;
     }
@@ -304,12 +318,12 @@ fn label(statement: Statement) -> Option<(&str, &str)> {
     if let Object::Literal(label, Extra::Lang(lang)) = statement.object {
         if LANGUAGES.contains(lang) {
             if let Subject::IRI(iri) = statement.subject {
-                return Some((iri, label))
+                return Some((iri, label));
             }
         }
     }
 
-    return None
+    return None;
 }
 
 fn main() {
@@ -324,7 +338,9 @@ fn main() {
     let thread_count = 1; // num_cpus::get();
     for id in 1..=thread_count {
         let line_receiver = line_receiver.clone();
-        threads.push(thread::spawn(move || consume(id.to_string(), line_receiver, labels)));
+        threads.push(thread::spawn(move || {
+            consume(id.to_string(), line_receiver, labels)
+        }));
     }
 
     for path in opts.paths {
@@ -355,8 +371,7 @@ mod tests {
 
     #[test]
     fn test_literal_with_type() {
-        let line =
-            r#"<http://www.wikidata.org/entity/Q1644> <http://www.wikidata.org/prop/direct/P2043> "+1094.26"^^<http://www.w3.org/2001/XMLSchema#decimal> ."#;
+        let line = r#"<http://www.wikidata.org/entity/Q1644> <http://www.wikidata.org/prop/direct/P2043> "+1094.26"^^<http://www.w3.org/2001/XMLSchema#decimal> ."#;
         assert_eq!(
             parse(1, line),
             Statement {
@@ -385,8 +400,7 @@ mod tests {
 
     #[test]
     fn test_literal() {
-        let line =
-            r#"<http://www.wikidata.org/entity/Q177> <http://www.wikidata.org/prop/direct/P373> "Pizzas" ."#;
+        let line = r#"<http://www.wikidata.org/entity/Q177> <http://www.wikidata.org/prop/direct/P373> "Pizzas" ."#;
         assert_eq!(
             parse(1, line),
             Statement {
@@ -425,7 +439,13 @@ mod tests {
 
     #[test]
     fn test_geo_literals() {
-        assert!(is_acceptable(parse(1, r#"<foo> <bar> "Point(4.6681 50.6411)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#)));
-        assert!(!is_acceptable(parse(1, r#"<foo> <bar> "<http://www.wikidata.org/entity/Q405> Point(-141.6 42.6)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#)));
+        assert!(is_acceptable(parse(
+            1,
+            r#"<foo> <bar> "Point(4.6681 50.6411)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#
+        )));
+        assert!(!is_acceptable(parse(
+            1,
+            r#"<foo> <bar> "<http://www.wikidata.org/entity/Q405> Point(-141.6 42.6)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#
+        )));
     }
 }
