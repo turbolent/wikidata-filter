@@ -4,41 +4,48 @@ use bzip2::Compression;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use regex::Regex;
 use std::collections::HashSet;
-use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::{BufRead, BufWriter, Read, Write};
 use std::thread;
 use std::time::Instant;
+use clap::Clap;
+use lazy_static::lazy_static;
 
 const BATCH_SIZE: u64 = 100;
 
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate lazy_static_include;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clap)]
+#[clap()]
+struct Opts {
+    #[clap(short, long)]
+    labels: bool,
+    paths: Vec<String>
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum Extra<'a> {
     None,
     Type(&'a str),
     Lang(&'a str),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum Subject<'a> {
     IRI(&'a str),
     Blank(&'a str),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum Object<'a> {
     IRI(&'a str),
     Blank(&'a str),
     Literal(&'a str, Extra<'a>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct Statement<'a> {
     subject: Subject<'a>,
     predicate: &'a str,
@@ -150,9 +157,12 @@ pub fn parse(line: u64, input: &str) -> Statement {
     }
 }
 
-lazy_static_include_str!(PROPERTIES_DATA, "properties");
-lazy_static_include_str!(IDENTIFIER_PROPERTIES_DATA, "identifier-properties");
-lazy_static_include_str!(LANGUAGES_DATA, "languages");
+lazy_static_include_str! {
+    PROPERTIES_DATA => "properties",
+    IDENTIFIER_PROPERTIES_DATA => "identifier-properties",
+    LANGUAGES_DATA => "languages",
+    LABELS_DATA => "labels",
+}
 
 lazy_static! {
     static ref PROPERTIES: HashSet<&'static str> = line_set(&PROPERTIES_DATA);
@@ -170,6 +180,10 @@ lazy_static! {
 
 lazy_static! {
     static ref LANGUAGES: HashSet<&'static str> = line_set(&LANGUAGES_DATA);
+}
+
+lazy_static! {
+    static ref LABELS: HashSet<&'static str> = line_set(&LABELS_DATA);
 }
 
 fn line_set(data: &str) -> HashSet<&str> {
@@ -199,46 +213,63 @@ fn produce<T: Read>(reader: T, s: &Sender<Work>) -> u64 {
             s.send(Work::LINES(total, lines)).unwrap();
             lines = Vec::new();
         }
+
+        if total % 1000 == 0 {
+            eprintln!("# {}", total);
+        }
     }
 
-    if lines.len() > 0 {
+    if !lines.is_empty() {
         s.send(Work::LINES(total, lines)).unwrap();
     }
 
     total
 }
 
-fn consume(id: usize, r: Receiver<Work>) {
-    let path = format!("{}.nt.bz2", id);
-    let file = File::create(&path).expect(format!("unable to create file: {}", &path).as_str());
-    let mut encoder = BzEncoder::new(BufWriter::new(file), Compression::Best);
+fn consume(name: String, r: Receiver<Work>, labels: bool) {
+    let lines_path = format!("{}.nt.bz2", name);
+    let lines_file = File::create(&lines_path).unwrap_or_else(|_| panic!("unable to create file: {}", &lines_path));
+    let mut lines_encoder = BzEncoder::new(BufWriter::new(lines_file), Compression::best());
+
+    let mut labels_encoder = if labels {
+        let labels_path = format!("labels_{}.bz2", name);
+        let labels_file = File::create(&labels_path).unwrap_or_else(|_| panic!("unable to create file: {}", &labels_path));
+        Some(BzEncoder::new(BufWriter::new(labels_file), Compression::best()))
+    } else {
+        None
+    };
 
     loop {
         match r.recv().unwrap() {
             Work::LINES(number, lines) => {
                 for line in lines {
-                    handle(&mut encoder, number, line)
+                    handle(&mut lines_encoder, &mut labels_encoder.as_mut(), number, line)
                 }
+                lines_encoder.flush().unwrap();
+                labels_encoder.as_mut().map(|it| it.flush().unwrap());
             }
             Work::DONE => {
-                encoder.try_finish().unwrap();
-                return;
+                lines_encoder.try_finish().unwrap();
+                labels_encoder.as_mut().map(|it| it.try_finish().unwrap());
             }
         }
     }
 }
 
-fn handle<T: Write>(writer: &mut T, number: u64, line: String) {
+fn handle<T: Write, U: Write>(lines_writer: &mut T, labels_writer: &mut Option<&mut U>, number: u64, line: String) {
     let statement = parse(number, &line);
 
-    if !is_acceptable(statement) {
-        return;
+    if is_acceptable(statement) {
+        lines_writer.write_all(line.as_bytes()).unwrap();
     }
 
-    writer.write_all(&line.as_bytes()).unwrap();
+    if let Some((iri, label)) = label(statement) {
+        labels_writer.as_mut().map(|it| it.write_fmt(format_args!("{} {}\n", iri, label)).unwrap());
+    }
 }
 
 fn is_acceptable(statement: Statement) -> bool {
+
     if PROPERTIES.contains(statement.predicate)
         || IDENTIFIER_PROPERTIES.contains(statement.predicate)
     {
@@ -256,40 +287,58 @@ fn is_acceptable(statement: Statement) -> bool {
         Object::Literal(
             literal,
             Extra::Type("http://www.opengis.net/ont/geosparql#wktLiteral"),
-        ) if literal.starts_with("<") => return false,
+        ) if literal.starts_with('<') => return false,
         _ => (),
     }
 
     true
 }
 
-fn main() {
-    if env::args().len() <= 1 {
-        panic!("missing paths");
+
+fn label(statement: Statement) -> Option<(&str, &str)> {
+
+    if !LABELS.contains(statement.predicate) {
+        return None;
     }
+
+    if let Object::Literal(label, Extra::Lang(lang)) = statement.object {
+        if LANGUAGES.contains(lang) {
+            if let Subject::IRI(iri) = statement.subject {
+                return Some((iri, label))
+            }
+        }
+    }
+
+    return None
+}
+
+fn main() {
+    let opts: Opts = Opts::parse();
+    let labels = opts.labels;
 
     let start = Instant::now();
 
-    let (s, r) = bounded::<Work>(0);
+    let (line_sender, line_receiver) = bounded::<Work>(0);
 
     let mut threads = Vec::new();
-    for id in 1..=num_cpus::get() {
-        let r = r.clone();
-        threads.push(thread::spawn(move || consume(id, r)));
+    let thread_count = 1; // num_cpus::get();
+    for id in 1..=thread_count {
+        let line_receiver = line_receiver.clone();
+        threads.push(thread::spawn(move || consume(id.to_string(), line_receiver, labels)));
     }
 
-    for path in env::args().skip(1) {
+    for path in opts.paths {
         let file = File::open(&path).expect("can't open file");
 
         let decoder = BzDecoder::new(BufReader::new(file));
         eprintln!("# processing {}", path);
 
-        let count = produce(decoder, &s);
+        let count = produce(decoder, &line_sender);
         eprintln!("# processed {}: {}", path, count);
     }
 
     for _ in &threads {
-        s.send(Work::DONE).unwrap();
+        line_sender.send(Work::DONE).unwrap();
     }
 
     for thread in threads {
