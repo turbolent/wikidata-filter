@@ -9,10 +9,10 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::{BufRead, BufWriter, Read, Write};
-use std::thread;
-use std::time::Instant;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::Instant;
 
 const BATCH_SIZE: u64 = 100;
 
@@ -212,7 +212,7 @@ fn produce<T: Read>(running: Arc<AtomicBool>, skip: u64, reader: T, s: &Sender<W
     loop {
         if !running.load(Ordering::SeqCst) {
             eprintln!("# interrupted after {}", total);
-            break
+            break;
         }
 
         let mut line = String::new();
@@ -285,7 +285,7 @@ fn consume(name: String, r: Receiver<Work>, labels: bool) {
                 if let Some(labels_encoder) = labels_encoder.as_mut() {
                     labels_encoder.try_finish().unwrap()
                 }
-                return
+                return;
             }
         }
     }
@@ -362,7 +362,8 @@ fn main() {
 
     ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
-    }).expect("failed to set Ctrl-C handler");
+    })
+    .expect("failed to set Ctrl-C handler");
 
     let start = Instant::now();
 
