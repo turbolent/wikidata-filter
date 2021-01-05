@@ -342,7 +342,7 @@ fn main() {
     let (line_sender, line_receiver) = bounded::<Work>(0);
 
     let mut threads = Vec::new();
-    let thread_count = 1; // num_cpus::get();
+    let thread_count = num_cpus::get();
     for id in 1..=thread_count {
         let line_receiver = line_receiver.clone();
         threads.push(thread::spawn(move || {
