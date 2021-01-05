@@ -11,6 +11,8 @@ use std::io::BufReader;
 use std::io::{BufRead, BufWriter, Read, Write};
 use std::thread;
 use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 const BATCH_SIZE: u64 = 100;
 
@@ -22,6 +24,8 @@ extern crate lazy_static_include;
 struct Opts {
     #[clap(short, long)]
     labels: bool,
+    #[clap(short, long)]
+    skip: u64,
     #[clap(required = true)]
     paths: Vec<String>,
 }
@@ -195,28 +199,42 @@ fn ignored_subject(iri: &str) -> bool {
     iri.starts_with("https://www.wikidata.org/wiki/Special:EntityData")
 }
 
-fn produce<T: Read>(reader: T, s: &Sender<Work>) -> u64 {
+fn produce<T: Read>(running: Arc<AtomicBool>, skip: u64, reader: T, s: &Sender<Work>) -> u64 {
     let mut total = 0;
     let mut buf_reader = BufReader::new(reader);
 
     let mut lines = Vec::new();
 
+    if skip > 0 {
+        eprintln!("# skipping {}", skip)
+    }
+
     loop {
+        if !running.load(Ordering::SeqCst) {
+            eprintln!("# interrupted after {}", total);
+            break
+        }
+
         let mut line = String::new();
         if buf_reader.read_line(&mut line).unwrap() == 0 {
             break;
         }
         total += 1;
 
-        lines.push(line);
+        let skipped = total < skip;
 
-        if total % BATCH_SIZE == 0 {
-            s.send(Work::LINES(total, lines)).unwrap();
-            lines = Vec::new();
+        if !skipped {
+            lines.push(line);
+
+            if total % BATCH_SIZE == 0 {
+                s.send(Work::LINES(total, lines)).unwrap();
+                lines = Vec::new();
+            }
         }
 
-        if total % 1000 == 0 {
-            eprintln!("# {}", total);
+        if total % 100000 == 0 {
+            let status = if skipped { "skipped" } else { "" };
+            eprintln!("# {} {}", status, total);
         }
     }
 
@@ -262,10 +280,12 @@ fn consume(name: String, r: Receiver<Work>, labels: bool) {
                 }
             }
             Work::DONE => {
+                eprintln!("# stopping thread {}", name);
                 lines_encoder.try_finish().unwrap();
                 if let Some(labels_encoder) = labels_encoder.as_mut() {
                     labels_encoder.try_finish().unwrap()
                 }
+                return
             }
         }
     }
@@ -337,6 +357,13 @@ fn main() {
     let opts: Opts = Opts::parse();
     let labels = opts.labels;
 
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    }).expect("failed to set Ctrl-C handler");
+
     let start = Instant::now();
 
     let (line_sender, line_receiver) = bounded::<Work>(0);
@@ -356,7 +383,7 @@ fn main() {
         let decoder = BzDecoder::new(BufReader::new(file));
         eprintln!("# processing {}", path);
 
-        let count = produce(decoder, &line_sender);
+        let count = produce(running.clone(), opts.skip, decoder, &line_sender);
         eprintln!("# processed {}: {}", path, count);
     }
 
