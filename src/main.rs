@@ -22,6 +22,7 @@ extern crate lazy_static_include;
 struct Opts {
     #[clap(short, long)]
     labels: bool,
+    #[clap(required = true)]
     paths: Vec<String>,
 }
 
