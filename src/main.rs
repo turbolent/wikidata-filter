@@ -27,6 +27,8 @@ struct Opts {
     labels: bool,
     #[clap(short, long, default_value = "0")]
     skip: u64,
+    #[clap(short, long)]
+    threads: Option<usize>,
     #[clap(required = true)]
     paths: Vec<String>,
 }
@@ -371,7 +373,7 @@ fn main() {
     let (line_sender, line_receiver) = bounded::<Work>(0);
 
     let mut threads = Vec::new();
-    let thread_count = num_cpus::get();
+    let thread_count = opts.threads.unwrap_or_else(|| num_cpus::get() * 2);
     for id in 1..=thread_count {
         let line_receiver = line_receiver.clone();
         threads.push(thread::spawn(move || {
