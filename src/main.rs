@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
+use std::process::exit;
 
 const BATCH_SIZE: u64 = 100;
 
@@ -199,7 +200,7 @@ fn ignored_subject(iri: &str) -> bool {
     iri.starts_with("https://www.wikidata.org/wiki/Special:EntityData")
 }
 
-fn produce<T: Read>(running: Arc<AtomicBool>, skip: u64, reader: T, s: &Sender<Work>) -> u64 {
+fn produce<T: Read>(running: Arc<AtomicBool>, skip: u64, reader: T, s: &Sender<Work>) -> (bool, u64) {
     let mut total = 0;
     let mut buf_reader = BufReader::new(reader);
 
@@ -212,7 +213,7 @@ fn produce<T: Read>(running: Arc<AtomicBool>, skip: u64, reader: T, s: &Sender<W
     loop {
         if !running.load(Ordering::SeqCst) {
             eprintln!("# interrupted after {}", total);
-            break;
+            return (false, total);
         }
 
         let mut line = String::new();
@@ -242,7 +243,7 @@ fn produce<T: Read>(running: Arc<AtomicBool>, skip: u64, reader: T, s: &Sender<W
         s.send(Work::LINES(total, lines)).unwrap();
     }
 
-    total
+    (true, total)
 }
 
 fn consume(name: String, r: Receiver<Work>, labels: bool) {
@@ -378,14 +379,21 @@ fn main() {
         }));
     }
 
+    let mut exit_code = 0;
+
     for path in opts.paths {
         let file = File::open(&path).expect("can't open file");
 
         let decoder = BzDecoder::new(BufReader::new(file));
         eprintln!("# processing {}", path);
 
-        let count = produce(running.clone(), opts.skip, decoder, &line_sender);
+        let (finished, count) = produce(running.clone(), opts.skip, decoder, &line_sender);
         eprintln!("# processed {}: {}", path, count);
+
+        if !finished {
+            exit_code = 1;
+            break;
+        }
     }
 
     for _ in &threads {
@@ -398,6 +406,8 @@ fn main() {
 
     let duration = start.elapsed();
     eprintln!("# took {:?}", duration);
+
+    exit(exit_code);
 }
 
 #[cfg(test)]
