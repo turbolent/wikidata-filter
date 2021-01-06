@@ -9,11 +9,11 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::{BufRead, BufWriter, Read, Write};
+use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
-use std::process::exit;
 
 const BATCH_SIZE: u64 = 100;
 
@@ -202,7 +202,12 @@ fn ignored_subject(iri: &str) -> bool {
     iri.starts_with("https://www.wikidata.org/wiki/Special:EntityData")
 }
 
-fn produce<T: Read>(running: Arc<AtomicBool>, skip: u64, reader: T, s: &Sender<Work>) -> (bool, u64) {
+fn produce<T: Read>(
+    running: Arc<AtomicBool>,
+    skip: u64,
+    reader: T,
+    s: &Sender<Work>,
+) -> (bool, u64) {
     let mut total = 0;
     let mut buf_reader = BufReader::new(reader);
 
