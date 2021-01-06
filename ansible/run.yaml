@@ -1,0 +1,48 @@
+
+- hosts:
+  - wikidata-filter
+  vars:
+    dump_name: "wikidata-{{ dump_date | mandatory }}-truthy-BETA.nt.bz2"
+    base_dir: "/root/wikidata-filter"
+  tasks:
+
+  - name: Install git and build-essential
+    package:
+      name:
+      - git
+      - build-essential
+      state: present
+
+  - name: Install rustup
+    shell: "curl https://sh.rustup.rs -sSf | sh -s -- -y"
+    args:
+      creates: "/root/.cargo/env"
+
+  - name: Git checkout
+    git:
+      repo: "https://github.com/turbolent/wikidata-filter.git"
+      dest: "{{ base_dir }}"
+
+  - name: Build
+    shell: "~/.cargo/bin/cargo build --release"
+    args:
+      chdir: "{{ base_dir }}"
+    environment:
+      RUSTFLAGS: "-C target-cpu=native"
+
+  - name: Download data
+    get_url:
+      url: "http://dumps.wikimedia.your.org/other/wikibase/wikidatawiki/{{ dump_date }}/{{ dump_name }}"
+      dest: "{{ base_dir }}/{{ dump_name }}"
+
+  - name: Filter dump
+    shell: |
+      start-stop-daemon \
+          --start \
+          --oknodo \
+          --pidfile /var/run/wikidata-filter-{{ dump_date }}.pid \
+          --chdir {{ base_dir }} \
+          --exec {{ base_dir }}/background.sh \
+          -- --labels {{ dump_name }}
+    async: 10
+    poll: 0

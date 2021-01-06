@@ -1,0 +1,14 @@
+- hosts:
+  - localhost
+  gather_facts: no
+  tasks:
+
+  - name: Ensure server exists
+    local_action:
+      module: vultr_server
+      name: wikidata-filter
+      os: "Debian 10 x64 (buster)"
+      plan: "402" # high frequency, 2 cores, 4 GB memory, 128 GB NVMe
+      region: Seattle
+      ssh_keys:
+      - wikidata-filter-key
