@@ -306,18 +306,25 @@ fn handle<T: Write, U: Write>(
     line: String,
 ) {
     let statement = parse(number, &line);
+    maybe_write_line(lines_writer, &line, statement);
+    maybe_write_label(labels_writer, statement);
+}
 
-    if is_acceptable(statement) {
-        lines_writer.write_all(line.as_bytes()).unwrap();
+fn maybe_write_line<T: Write>(lines_writer: &mut T, line: &String, statement: Statement) {
+    if !is_acceptable(statement) {
+        return
     }
 
-    if let Some(labels_writer) = labels_writer.as_mut() {
-        if let Some((iri, label)) = label(statement) {
-            labels_writer
-                .write_fmt(format_args!("{} {}\n", iri, label))
-                .unwrap()
-        }
-    }
+    lines_writer.write_all(line.as_bytes()).unwrap();
+}
+
+fn maybe_write_label<T: Write>(labels_writer: &mut Option<&mut T>, statement: Statement) -> Option<()> {
+    let labels_writer = labels_writer.as_mut()?;
+    let (id, label) = label(statement)?;
+    labels_writer
+        .write_fmt(format_args!("{} {}\n", id, label))
+        .unwrap();
+    return Some(());
 }
 
 fn is_acceptable(statement: Statement) -> bool {
@@ -345,16 +352,21 @@ fn is_acceptable(statement: Statement) -> bool {
     true
 }
 
+static ENTITY_IRI_PREFIX: &str = "http://www.wikidata.org/entity/Q";
+
 fn label(statement: Statement) -> Option<(&str, &str)> {
     if !LABELS.contains(statement.predicate) {
         return None;
     }
 
     if let Object::Literal(label, Extra::Lang(lang)) = statement.object {
-        if LANGUAGES.contains(lang) {
-            if let Subject::IRI(iri) = statement.subject {
-                return Some((iri, label));
-            }
+        if !LANGUAGES.contains(lang) {
+            return None;
+        }
+
+        if let Subject::IRI(iri) = statement.subject {
+            let id = iri.strip_prefix(ENTITY_IRI_PREFIX)?;
+            return Some((id, label));
         }
     }
 
