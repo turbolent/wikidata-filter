@@ -310,21 +310,24 @@ fn handle<T: Write, U: Write>(
     maybe_write_label(labels_writer, statement);
 }
 
-fn maybe_write_line<T: Write>(lines_writer: &mut T, line: &String, statement: Statement) {
+fn maybe_write_line<T: Write>(lines_writer: &mut T, line: &str, statement: Statement) {
     if !is_acceptable(statement) {
-        return
+        return;
     }
 
     lines_writer.write_all(line.as_bytes()).unwrap();
 }
 
-fn maybe_write_label<T: Write>(labels_writer: &mut Option<&mut T>, statement: Statement) -> Option<()> {
+fn maybe_write_label<T: Write>(
+    labels_writer: &mut Option<&mut T>,
+    statement: Statement,
+) -> Option<()> {
     let labels_writer = labels_writer.as_mut()?;
     let (id, label) = label(statement)?;
     labels_writer
         .write_fmt(format_args!("{} {}\n", id, label))
         .unwrap();
-    return Some(());
+    Some(())
 }
 
 fn is_acceptable(statement: Statement) -> bool {
