@@ -357,7 +357,7 @@ fn is_acceptable(statement: Statement) -> bool {
 
 static ENTITY_IRI_PREFIX: &str = "http://www.wikidata.org/entity/Q";
 
-fn label(statement: Statement) -> Option<(&str, &str)> {
+fn label(statement: Statement) -> Option<(&str, String)> {
     if !LABELS.contains(statement.predicate) {
         return None;
     }
@@ -369,11 +369,70 @@ fn label(statement: Statement) -> Option<(&str, &str)> {
 
         if let Subject::IRI(iri) = statement.subject {
             let id = iri.strip_prefix(ENTITY_IRI_PREFIX)?;
-            return Some((id, label));
+            return Some((id, unescape(label)));
         }
     }
 
     None
+}
+
+pub fn unescape(s: &str) -> String {
+    let mut chars = s.chars().enumerate();
+    let mut res = String::with_capacity(s.len());
+
+    while let Some((idx, c)) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                None => {
+                    panic!("invalid escape at {} in {}", idx, s);
+                }
+                Some((idx, c2)) => {
+                    res.push(match c2 {
+                        't' => '\t',
+                        'b' => '\u{08}',
+                        'n' => '\n',
+                        'r' => '\r',
+                        'f' => '\u{0C}',
+                        '\\' => '\\',
+
+                        'u' => match parse_unicode(&mut chars, 4) {
+                            Ok(c3) => c3,
+                            Err(err) => {
+                                panic!("invalid escape {}{} at {} in {}: {}", c, c2, idx, s, err);
+                            }
+                        },
+                        'U' => match parse_unicode(&mut chars, 8) {
+                            Ok(c3) => c3,
+                            Err(err) => {
+                                panic!("invalid escape {}{} at {} in {}: {}", c, c2, idx, s, err);
+                            }
+                        },
+                        _ => {
+                            panic!("invalid escape {}{} at {} in {}", c, c2, idx, s);
+                        }
+                    });
+                    continue;
+                }
+            };
+        }
+
+        res.push(c);
+    }
+
+    res
+}
+
+fn parse_unicode<I>(chars: &mut I, count: usize) -> Result<char, String>
+where
+    I: Iterator<Item = (usize, char)>,
+{
+    let unicode_seq: String = chars.take(count).map(|(_, c)| c).collect();
+
+    u32::from_str_radix(&unicode_seq, 16)
+        .map_err(|e| format!("could not parse {} as u32 hex: {}", unicode_seq, e))
+        .and_then(|u| {
+            std::char::from_u32(u).ok_or_else(|| format!("could not parse {} as a unicode char", u))
+        })
 }
 
 fn main() {
@@ -384,6 +443,9 @@ fn main() {
     let r = running.clone();
 
     ctrlc::set_handler(move || {
+        if r.load(Ordering::SeqCst) {
+            exit(1);
+        }
         r.store(false, Ordering::SeqCst);
     })
     .expect("failed to set Ctrl-C handler");
