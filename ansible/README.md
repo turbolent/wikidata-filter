@@ -17,5 +17,5 @@
 4. Start the job:
 
    ```
-   ansible-playbook playbook.yaml --inventory vultr.yml -e "dump_date=20201230"
+   ansible-playbook run.yaml --inventory vultr.yml -e "dump_date=20201230"
    ```
