@@ -14,8 +14,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
+use dashmap::DashMap;
 
 const BATCH_SIZE: u64 = 100;
+const PROGRESS_COUNT: u64 = 100000;
 
 #[macro_use]
 extern crate lazy_static_include;
@@ -25,6 +27,8 @@ extern crate lazy_static_include;
 struct Opts {
     #[clap(short, long)]
     labels: bool,
+    #[clap(short, long)]
+    entity_statement_counts: bool,
     #[clap(short, long, default_value = "0")]
     skip: u64,
     #[clap(short, long)]
@@ -240,7 +244,7 @@ fn produce<T: Read>(
             }
         }
 
-        if total % 100000 == 0 {
+        if total % PROGRESS_COUNT == 0 {
             let status = if skipped { "skipped" } else { "" };
             eprintln!("# {} {}", status, total);
         }
@@ -253,7 +257,12 @@ fn produce<T: Read>(
     (true, total)
 }
 
-fn consume(name: String, r: Receiver<Work>, labels: bool) {
+fn consume(
+    name: String,
+    work_receiver: Receiver<Work>,
+    entity_counter: Option<Arc<DashMap<String, u64>>>,
+    labels: bool
+) {
     let lines_path = format!("{}.nt.bz2", name);
     let lines_file = File::create(&lines_path)
         .unwrap_or_else(|_| panic!("unable to create file: {}", &lines_path));
@@ -272,12 +281,14 @@ fn consume(name: String, r: Receiver<Work>, labels: bool) {
     };
 
     loop {
-        match r.recv().unwrap() {
+        match work_receiver.recv().unwrap() {
             Work::LINES(number, lines) => {
                 for line in lines {
+                    let entity_counter = entity_counter.clone();
                     handle(
                         &mut lines_encoder,
                         &mut labels_encoder.as_mut(),
+                        entity_counter,
                         number,
                         line,
                     )
@@ -302,12 +313,25 @@ fn consume(name: String, r: Receiver<Work>, labels: bool) {
 fn handle<T: Write, U: Write>(
     lines_writer: &mut T,
     labels_writer: &mut Option<&mut U>,
+    entity_counter: Option<Arc<DashMap<String, u64>>>,
     number: u64,
     line: String,
 ) {
     let statement = parse(number, &line);
     maybe_write_line(lines_writer, &line, statement);
     maybe_write_label(labels_writer, statement);
+    if let Some(entity_counter) = entity_counter {
+        maybe_count_entity(entity_counter, statement);
+    }
+}
+
+fn maybe_count_entity(
+    entity_counter: Arc<DashMap<String, u64>>,
+    statement: Statement
+) {
+    if let Some(id) = entity(statement.subject) {
+        *entity_counter.entry(id.to_string()).or_insert(0) += 1
+    };
 }
 
 fn maybe_write_line<T: Write>(lines_writer: &mut T, line: &str, statement: Statement) {
@@ -376,6 +400,14 @@ fn label(statement: Statement) -> Option<(&str, String)> {
     None
 }
 
+fn entity(subject: Subject) -> Option<&str> {
+    if let Subject::IRI(iri) = subject {
+        iri.strip_prefix(ENTITY_IRI_PREFIX)
+    } else {
+        None
+    }
+}
+
 pub fn unescape(s: &str) -> String {
     let mut chars = s.chars().enumerate();
     let mut res = String::with_capacity(s.len());
@@ -438,6 +470,7 @@ where
 fn main() {
     let opts: Opts = Opts::parse();
     let labels = opts.labels;
+    let entity_statement_counts = opts.entity_statement_counts;
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -454,12 +487,25 @@ fn main() {
 
     let (line_sender, line_receiver) = bounded::<Work>(0);
 
+    let entity_counter =
+        if entity_statement_counts {
+            Some(Arc::new(DashMap::new()))
+        } else {
+            None
+        };
+
     let mut threads = Vec::new();
     let thread_count = opts.threads.unwrap_or_else(|| num_cpus::get() * 2);
     for id in 1..=thread_count {
         let line_receiver = line_receiver.clone();
+        let entity_counter = entity_counter.clone();
         threads.push(thread::spawn(move || {
-            consume(id.to_string(), line_receiver, labels)
+            consume(
+                id.to_string(),
+                line_receiver,
+                entity_counter,
+                labels
+            )
         }));
     }
 
@@ -490,6 +536,18 @@ fn main() {
 
     let duration = start.elapsed();
     eprintln!("# took {:?}", duration);
+
+    if let Some(entity_counter) = entity_counter {
+        eprintln!("# entities: {}", entity_counter.len());
+        let path = "entity_counts.bz2";
+        let file = File::create(path)
+            .unwrap_or_else(|_| panic!("unable to create file: {}", path));
+        let mut encoder = BzEncoder::new(BufWriter::new(file), Compression::best());
+        for entry in entity_counter.iter() {
+            encoder.write_fmt(format_args!("{} {}\n", entry.key(), entry.value())).unwrap();
+        }
+        encoder.try_finish().unwrap();
+    }
 
     exit(exit_code);
 }
