@@ -3,6 +3,7 @@ use bzip2::write::BzEncoder;
 use bzip2::Compression;
 use clap::Clap;
 use crossbeam_channel::{bounded, Receiver, Sender};
+use dashmap::DashMap;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashSet;
@@ -14,7 +15,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
-use dashmap::DashMap;
 
 const BATCH_SIZE: u64 = 100;
 const PROGRESS_COUNT: u64 = 100000;
@@ -261,7 +261,7 @@ fn consume(
     name: String,
     work_receiver: Receiver<Work>,
     entity_counter: Option<Arc<DashMap<String, u64>>>,
-    labels: bool
+    labels: bool,
 ) {
     let lines_path = format!("{}.nt.bz2", name);
     let lines_file = File::create(&lines_path)
@@ -325,10 +325,7 @@ fn handle<T: Write, U: Write>(
     }
 }
 
-fn maybe_count_entity(
-    entity_counter: Arc<DashMap<String, u64>>,
-    statement: Statement
-) {
+fn maybe_count_entity(entity_counter: Arc<DashMap<String, u64>>, statement: Statement) {
     if let Some(id) = entity(statement.subject) {
         *entity_counter.entry(id.to_string()).or_insert(0) += 1
     };
@@ -487,12 +484,11 @@ fn main() {
 
     let (line_sender, line_receiver) = bounded::<Work>(0);
 
-    let entity_counter =
-        if entity_statement_counts {
-            Some(Arc::new(DashMap::new()))
-        } else {
-            None
-        };
+    let entity_counter = if entity_statement_counts {
+        Some(Arc::new(DashMap::new()))
+    } else {
+        None
+    };
 
     let mut threads = Vec::new();
     let thread_count = opts.threads.unwrap_or_else(|| num_cpus::get() * 2);
@@ -500,12 +496,7 @@ fn main() {
         let line_receiver = line_receiver.clone();
         let entity_counter = entity_counter.clone();
         threads.push(thread::spawn(move || {
-            consume(
-                id.to_string(),
-                line_receiver,
-                entity_counter,
-                labels
-            )
+            consume(id.to_string(), line_receiver, entity_counter, labels)
         }));
     }
 
@@ -540,11 +531,12 @@ fn main() {
     if let Some(entity_counter) = entity_counter {
         eprintln!("# entities: {}", entity_counter.len());
         let path = "entity_counts.bz2";
-        let file = File::create(path)
-            .unwrap_or_else(|_| panic!("unable to create file: {}", path));
+        let file = File::create(path).unwrap_or_else(|_| panic!("unable to create file: {}", path));
         let mut encoder = BzEncoder::new(BufWriter::new(file), Compression::best());
         for entry in entity_counter.iter() {
-            encoder.write_fmt(format_args!("{} {}\n", entry.key(), entry.value())).unwrap();
+            encoder
+                .write_fmt(format_args!("{} {}\n", entry.key(), entry.value()))
+                .unwrap();
         }
         encoder.try_finish().unwrap();
     }
