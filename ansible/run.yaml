@@ -43,6 +43,6 @@
           --pidfile /var/run/wikidata-filter-{{ dump_date }}.pid \
           --chdir {{ base_dir }} \
           --exec {{ base_dir }}/background.sh \
-          -- --labels --entity-statement-counts {{ dump_name }}
+          -- --labels --statement-counts {{ dump_name }}
     async: 10
     poll: 0
