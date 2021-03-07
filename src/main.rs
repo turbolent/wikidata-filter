@@ -369,7 +369,7 @@ fn maybe_count_statement<'a>(
     let id = entity(statement.subject)?;
     direct_property(statement.predicate)?;
     *statement_counter.entry(id.to_string()).or_insert(0) += 1;
-    return Some(id);
+    Some(id)
 }
 
 fn is_acceptable(statement: Statement) -> bool {
@@ -661,20 +661,20 @@ mod tests {
         let second_predicate = "second";
         let third_predicate = format!("{}third", DIRECT_PROPERTY_IRI_PREFIX);
 
-        let first = Statement{
+        let first = Statement {
             subject: Subject::IRI(a.as_str()),
             predicate: first_predicate.as_str(),
-            object: Object::IRI("")
+            object: Object::IRI(""),
         };
-        let second = Statement{
+        let second = Statement {
             subject: Subject::IRI(b.as_str()),
             predicate: second_predicate,
-            object: Object::IRI("")
+            object: Object::IRI(""),
         };
-        let third = Statement{
+        let third = Statement {
             subject: Subject::IRI(a.as_str()),
             predicate: third_predicate.as_str(),
-            object: Object::IRI("")
+            object: Object::IRI(""),
         };
         let mut counter = HashMap::new();
         let counter_ref = &mut Some(&mut counter);
