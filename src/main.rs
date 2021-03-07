@@ -366,11 +366,10 @@ fn maybe_count_statement<'a>(
     statement: &'a Statement,
 ) -> Option<&'a str> {
     let statement_counter = statement_counter.as_mut()?;
-    if let Some(id) = entity(statement.subject) {
-        *statement_counter.entry(id.to_string()).or_insert(0) += 1;
-        return Some(id);
-    };
-    None
+    let id = entity(statement.subject)?;
+    direct_property(statement.predicate)?;
+    *statement_counter.entry(id.to_string()).or_insert(0) += 1;
+    return Some(id);
 }
 
 fn is_acceptable(statement: Statement) -> bool {
@@ -398,8 +397,6 @@ fn is_acceptable(statement: Statement) -> bool {
     true
 }
 
-static ENTITY_IRI_PREFIX: &str = "http://www.wikidata.org/entity/Q";
-
 fn label(statement: Statement) -> Option<String> {
     if !LABELS.contains(statement.predicate) {
         return None;
@@ -415,6 +412,7 @@ fn label(statement: Statement) -> Option<String> {
 
     None
 }
+static ENTITY_IRI_PREFIX: &str = "http://www.wikidata.org/entity/Q";
 
 fn entity(subject: Subject) -> Option<&str> {
     if let Subject::IRI(iri) = subject {
@@ -422,6 +420,12 @@ fn entity(subject: Subject) -> Option<&str> {
     } else {
         None
     }
+}
+
+static DIRECT_PROPERTY_IRI_PREFIX: &str = "http://www.wikidata.org/prop/direct/";
+
+fn direct_property(predicate: &str) -> Option<&str> {
+    predicate.strip_prefix(DIRECT_PROPERTY_IRI_PREFIX)
 }
 
 pub fn unescape(s: &str) -> String {
@@ -646,6 +650,40 @@ mod tests {
                 object: Object::Blank("baz")
             }
         );
+    }
+
+    #[test]
+    fn test_statement_count() {
+        let a = format!("{}a", ENTITY_IRI_PREFIX);
+        let b = format!("{}b", ENTITY_IRI_PREFIX);
+
+        let first_predicate = format!("{}first", DIRECT_PROPERTY_IRI_PREFIX);
+        let second_predicate = "second";
+        let third_predicate = format!("{}third", DIRECT_PROPERTY_IRI_PREFIX);
+
+        let first = Statement{
+            subject: Subject::IRI(a.as_str()),
+            predicate: first_predicate.as_str(),
+            object: Object::IRI("")
+        };
+        let second = Statement{
+            subject: Subject::IRI(b.as_str()),
+            predicate: second_predicate,
+            object: Object::IRI("")
+        };
+        let third = Statement{
+            subject: Subject::IRI(a.as_str()),
+            predicate: third_predicate.as_str(),
+            object: Object::IRI("")
+        };
+        let mut counter = HashMap::new();
+        let counter_ref = &mut Some(&mut counter);
+        maybe_count_statement(counter_ref, &first);
+        maybe_count_statement(counter_ref, &second);
+        maybe_count_statement(counter_ref, &third);
+        assert_eq!(counter.len(), 1);
+        assert_eq!(counter.get("a"), Some(&2));
+        assert_eq!(counter.get("b"), None);
     }
 
     #[test]
