@@ -300,7 +300,7 @@ fn consume(
                         &mut statement_counter.as_mut(),
                         number,
                         line,
-                    )
+                    );
                 }
                 lines_encoder.flush().unwrap();
                 if let Some(labels_encoder) = labels_encoder.as_mut() {
@@ -332,12 +332,13 @@ fn handle<T: Write, U: Write>(
     statement_counter: &mut Option<&mut HashMap<String, u64>>,
     number: u64,
     line: String,
-) {
+) -> Option<()> {
     let statement = parse(number, &line);
     maybe_write_line(lines_writer, &line, statement);
-    if let Some(id) = maybe_count_statement(statement_counter, &statement) {
-        maybe_write_label(labels_writer, id, statement);
-    }
+    let id = entity(statement.subject)?;
+    maybe_count_statement(statement_counter, id, statement);
+    maybe_write_label(labels_writer, id, statement);
+    None
 }
 
 fn maybe_write_line<T: Write>(lines_writer: &mut T, line: &str, statement: Statement) {
@@ -361,15 +362,15 @@ fn maybe_write_label<T: Write>(
     None
 }
 
-fn maybe_count_statement<'a>(
+fn maybe_count_statement(
     statement_counter: &mut Option<&mut HashMap<String, u64>>,
-    statement: &'a Statement,
-) -> Option<&'a str> {
+    id: &str,
+    statement: Statement,
+) -> Option<()> {
     let statement_counter = statement_counter.as_mut()?;
-    let id = entity(statement.subject)?;
     direct_property(statement.predicate)?;
     *statement_counter.entry(id.to_string()).or_insert(0) += 1;
-    Some(id)
+    None
 }
 
 fn is_acceptable(statement: Statement) -> bool {
@@ -678,9 +679,9 @@ mod tests {
         };
         let mut counter = HashMap::new();
         let counter_ref = &mut Some(&mut counter);
-        maybe_count_statement(counter_ref, &first);
-        maybe_count_statement(counter_ref, &second);
-        maybe_count_statement(counter_ref, &third);
+        maybe_count_statement(counter_ref, "a", first);
+        maybe_count_statement(counter_ref, "b", second);
+        maybe_count_statement(counter_ref, "a", third);
         assert_eq!(counter.len(), 1);
         assert_eq!(counter.get("a"), Some(&2));
         assert_eq!(counter.get("b"), None);
