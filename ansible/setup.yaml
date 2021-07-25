@@ -8,7 +8,7 @@
       module: vultr_server
       name: wikidata-filter
       os: "Debian 10 x64 (buster)"
-      plan: "406" # high-frequency, 12 cores, 48  GB memory, 786 GB SSD
+      plan: "405" # high-frequency, 8 cores, 32 GB memory, 512 GB SSD
       region: "2" # Chicago
       ssh_keys:
       - wikidata-filter-key
