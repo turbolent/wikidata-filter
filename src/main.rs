@@ -583,11 +583,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
 
-    use std::fs::read_to_string;
-    use std::io::{Lines, self};
-    use std::path::{Path, PathBuf};
-    use pretty_assertions::assert_eq;
     use super::*;
+    use pretty_assertions::assert_eq;
+    use std::fs::read_to_string;
+    use std::io::{self, Lines};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_literal_with_type() {
@@ -703,7 +703,10 @@ mod tests {
         )));
     }
 
-    fn read_lines<P>(filename: P) -> io::Result<Lines<BufReader<File>>> where P: AsRef<Path> {
+    fn read_lines<P>(filename: P) -> io::Result<Lines<BufReader<File>>>
+    where
+        P: AsRef<Path>,
+    {
         let file = File::open(filename)?;
         Ok(BufReader::new(file).lines())
     }
@@ -726,8 +729,14 @@ mod tests {
         for (line, number) in read_lines(in_path).unwrap().zip(1u64..) {
             let mut line = line.unwrap();
             line.push('\n');
-            handle(&mut lines_writer, &mut Some(&mut labels_writer), &mut None, number, line);
-        };
+            handle(
+                &mut lines_writer,
+                &mut Some(&mut labels_writer),
+                &mut None,
+                number,
+                line,
+            );
+        }
 
         let expected = read_to_string(out_path).unwrap();
         assert_eq!(String::from_utf8(lines_writer).unwrap(), expected);
