@@ -1,14 +1,13 @@
 use bzip2::bufread::BzDecoder;
 use bzip2::write::BzEncoder;
 use bzip2::Compression;
-use clap::Clap;
+use clap::Parser;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::BufReader;
-use std::io::{BufRead, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -21,8 +20,8 @@ const PROGRESS_COUNT: u64 = 100000;
 #[macro_use]
 extern crate lazy_static_include;
 
-#[derive(Clap)]
-#[clap()]
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
 struct Opts {
     #[clap(long)]
     labels: bool,
