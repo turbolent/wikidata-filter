@@ -582,7 +582,12 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use pretty_assertions::assert_eq;
+    use std::fs::read_to_string;
+    use std::io::{self, Lines};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_literal_with_type() {
@@ -696,5 +701,46 @@ mod tests {
             1,
             r#"<foo> <bar> "<http://www.wikidata.org/entity/Q405> Point(-141.6 42.6)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#
         )));
+    }
+
+    fn read_lines<P>(filename: P) -> io::Result<Lines<BufReader<File>>>
+    where
+        P: AsRef<Path>,
+    {
+        let file = File::open(filename)?;
+        Ok(BufReader::new(file).lines())
+    }
+
+    #[test]
+    fn test_full() -> Result<(), ()> {
+        let dir = env!("CARGO_MANIFEST_DIR");
+
+        let mut in_path = PathBuf::from(dir);
+        in_path.push("test.in.rdf");
+        let in_path = in_path.as_os_str().to_str().unwrap();
+
+        let mut out_path = PathBuf::from(dir);
+        out_path.push("test.out.rdf");
+        let out_path = out_path.as_os_str().to_str().unwrap();
+
+        let mut lines_writer = Vec::new();
+        let mut labels_writer = Vec::new();
+
+        for (line, number) in read_lines(in_path).unwrap().zip(1u64..) {
+            let mut line = line.unwrap();
+            line.push('\n');
+            handle(
+                &mut lines_writer,
+                &mut Some(&mut labels_writer),
+                &mut None,
+                number,
+                line,
+            );
+        }
+
+        let expected = read_to_string(out_path).unwrap();
+        assert_eq!(String::from_utf8(lines_writer).unwrap(), expected);
+
+        Ok(())
     }
 }
