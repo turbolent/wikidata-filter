@@ -298,8 +298,8 @@ fn consume(
                 for line in lines {
                     handle(
                         &mut lines_encoder,
-                        &mut labels_encoder.as_mut(),
-                        &mut statement_counter.as_mut(),
+                        labels_encoder.as_mut(),
+                        statement_counter.as_mut(),
                         number,
                         line,
                         &regex,
@@ -331,8 +331,8 @@ fn consume(
 
 fn handle<T: Write, U: Write>(
     lines_writer: &mut T,
-    labels_writer: &mut Option<&mut U>,
-    statement_counter: &mut Option<&mut HashMap<String, u64>>,
+    labels_writer: Option<&mut U>,
+    statement_counter: Option<&mut HashMap<String, u64>>,
     number: u64,
     line: String,
     regex: &Regex,
@@ -354,11 +354,11 @@ fn maybe_write_line<T: Write>(lines_writer: &mut T, line: &str, statement: State
 }
 
 fn maybe_write_label<T: Write>(
-    labels_writer: &mut Option<&mut T>,
+    labels_writer: Option<&mut T>,
     id: &str,
     statement: Statement,
 ) -> Option<()> {
-    let labels_writer = labels_writer.as_mut()?;
+    let labels_writer = labels_writer?;
     let label = label(statement)?;
     labels_writer
         .write_fmt(format_args!("{} {}\n", id, label))
@@ -367,11 +367,11 @@ fn maybe_write_label<T: Write>(
 }
 
 fn maybe_count_statement(
-    statement_counter: &mut Option<&mut HashMap<String, u64>>,
+    statement_counter: Option<&mut HashMap<String, u64>>,
     id: &str,
     statement: Statement,
 ) -> Option<()> {
-    let statement_counter = statement_counter.as_mut()?;
+    let statement_counter = statement_counter?;
     direct_property(statement.predicate)?;
     *statement_counter.entry(id.to_string()).or_insert(0) += 1;
     None
@@ -687,10 +687,9 @@ mod tests {
             object: Object::IRI(""),
         };
         let mut counter = HashMap::new();
-        let counter_ref = &mut Some(&mut counter);
-        maybe_count_statement(counter_ref, "a", first);
-        maybe_count_statement(counter_ref, "b", second);
-        maybe_count_statement(counter_ref, "a", third);
+        maybe_count_statement(Some(&mut counter), "a", first);
+        maybe_count_statement(Some(&mut counter), "b", second);
+        maybe_count_statement(Some(&mut counter), "a", third);
         assert_eq!(counter.len(), 1);
         assert_eq!(counter.get("a"), Some(&2));
         assert_eq!(counter.get("b"), None);
@@ -738,8 +737,8 @@ mod tests {
             line.push('\n');
             handle(
                 &mut lines_writer,
-                &mut Some(&mut labels_writer),
-                &mut None,
+                Some(&mut labels_writer),
+                None,
                 number,
                 line,
                 &RE,
