@@ -71,71 +71,72 @@ pub struct WorkResult {
     statement_counts: Option<HashMap<String, u64>>,
 }
 
-pub fn parse(line: u64, input: &str) -> Statement {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(
-            r#"(?x)
-            ^
-            \s*
+lazy_static! {
+    static ref RE: Regex = Regex::new(
+        r#"(?x)
+        ^
+        \s*
 
-            # subject
+        # subject
 
-            (?:
+        (?:
 
-              # IRI
-              (?:<([^>]*)>)
+          # IRI
+          (?:<([^>]*)>)
 
-              |
+          |
 
-              # Blank
+          # Blank
 
-              (?:_:([^\s]+))
-            )
-
-            \s*
-
-            # predicate IRI
-            <([^>]*)>
-
-            \s*
-
-            # object
-            (?:
-
-              # IRI
-              (?:<([^>]*)>)
-
-              |
-
-              # Blank
-
-              (?:_:([^\s]+))
-
-              |
-
-              # literal
-              (?:
-
-                "([^"]*)"
-
-                # optional extra
-                (?:
-
-                  # language
-                  (?:@([a-zA-Z]+(?:-[a-zA-Z0-9]+)*))
-
-                  |
-
-                  # data type
-                  (?:\^\^<([^>]*)>)
-                )?
-              )
-            )
-            "#
+          (?:_:([^\s]+))
         )
-        .unwrap();
-    }
-    let captures = RE
+
+        \s*
+
+        # predicate IRI
+        <([^>]*)>
+
+        \s*
+
+        # object
+        (?:
+
+          # IRI
+          (?:<([^>]*)>)
+
+          |
+
+          # Blank
+
+          (?:_:([^\s]+))
+
+          |
+
+          # literal
+          (?:
+
+            "([^"]*)"
+
+            # optional extra
+            (?:
+
+              # language
+              (?:@([a-zA-Z]+(?:-[a-zA-Z0-9]+)*))
+
+              |
+
+              # data type
+              (?:\^\^<([^>]*)>)
+            )?
+          )
+        )
+        "#
+    )
+    .unwrap();
+}
+
+pub fn parse<'a>(line: u64, input: &'a str, regex: &Regex) -> Statement<'a> {
+    let captures = regex
         .captures(input)
         .unwrap_or_else(|| panic!("Invalid line: {}: {:?}", line, input));
 
@@ -266,6 +267,8 @@ fn consume(
     labels: bool,
     statement_counts: bool,
 ) {
+    let regex = RE.clone();
+
     let lines_path = format!("{}.nt.bz2", name);
     let lines_file = File::create(&lines_path)
         .unwrap_or_else(|_| panic!("unable to create file: {}", &lines_path));
@@ -299,6 +302,7 @@ fn consume(
                         &mut statement_counter.as_mut(),
                         number,
                         line,
+                        &regex,
                     );
                 }
                 lines_encoder.flush().unwrap();
@@ -331,8 +335,9 @@ fn handle<T: Write, U: Write>(
     statement_counter: &mut Option<&mut HashMap<String, u64>>,
     number: u64,
     line: String,
+    regex: &Regex,
 ) -> Option<()> {
-    let statement = parse(number, &line);
+    let statement = parse(number, &line, regex);
     maybe_write_line(lines_writer, &line, statement);
     let id = entity(statement.subject)?;
     maybe_count_statement(statement_counter, id, statement);
@@ -593,7 +598,7 @@ mod tests {
     fn test_literal_with_type() {
         let line = r#"<http://www.wikidata.org/entity/Q1644> <http://www.wikidata.org/prop/direct/P2043> "+1094.26"^^<http://www.w3.org/2001/XMLSchema#decimal> ."#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::IRI("http://www.wikidata.org/entity/Q1644"),
                 predicate: "http://www.wikidata.org/prop/direct/P2043",
@@ -609,7 +614,7 @@ mod tests {
     fn test_literal_with_lang() {
         let line = r#"<http://www.wikidata.org/entity/Q177> <http://schema.org/name> "pizza"@en ."#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::IRI("http://www.wikidata.org/entity/Q177"),
                 predicate: "http://schema.org/name",
@@ -622,7 +627,7 @@ mod tests {
     fn test_literal() {
         let line = r#"<http://www.wikidata.org/entity/Q177> <http://www.wikidata.org/prop/direct/P373> "Pizzas" ."#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::IRI("http://www.wikidata.org/entity/Q177"),
                 predicate: "http://www.wikidata.org/prop/direct/P373",
@@ -635,7 +640,7 @@ mod tests {
     fn test_blank_subject() {
         let line = r#"_:foo <bar> <baz>"#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::Blank("foo"),
                 predicate: "bar",
@@ -648,7 +653,7 @@ mod tests {
     fn test_blank_object() {
         let line = r#"<foo> <bar> _:baz"#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::IRI("foo"),
                 predicate: "bar",
@@ -695,11 +700,13 @@ mod tests {
     fn test_geo_literals() {
         assert!(is_acceptable(parse(
             1,
-            r#"<foo> <bar> "Point(4.6681 50.6411)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#
+            r#"<foo> <bar> "Point(4.6681 50.6411)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#, 
+            &RE,
         )));
         assert!(!is_acceptable(parse(
             1,
-            r#"<foo> <bar> "<http://www.wikidata.org/entity/Q405> Point(-141.6 42.6)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#
+            r#"<foo> <bar> "<http://www.wikidata.org/entity/Q405> Point(-141.6 42.6)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#, 
+            &RE,
         )));
     }
 
@@ -735,6 +742,7 @@ mod tests {
                 &mut None,
                 number,
                 line,
+                &RE,
             );
         }
 
