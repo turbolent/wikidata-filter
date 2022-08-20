@@ -71,71 +71,72 @@ pub struct WorkResult {
     statement_counts: Option<HashMap<String, u64>>,
 }
 
-pub fn parse(line: u64, input: &str) -> Statement {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(
-            r#"(?x)
-            ^
-            \s*
+lazy_static! {
+    static ref RE: Regex = Regex::new(
+        r#"(?x)
+        ^
+        \s*
 
-            # subject
+        # subject
 
-            (?:
+        (?:
 
-              # IRI
-              (?:<([^>]*)>)
+          # IRI
+          (?:<([^>]*)>)
 
-              |
+          |
 
-              # Blank
+          # Blank
 
-              (?:_:([^\s]+))
-            )
-
-            \s*
-
-            # predicate IRI
-            <([^>]*)>
-
-            \s*
-
-            # object
-            (?:
-
-              # IRI
-              (?:<([^>]*)>)
-
-              |
-
-              # Blank
-
-              (?:_:([^\s]+))
-
-              |
-
-              # literal
-              (?:
-
-                "([^"]*)"
-
-                # optional extra
-                (?:
-
-                  # language
-                  (?:@([a-zA-Z]+(?:-[a-zA-Z0-9]+)*))
-
-                  |
-
-                  # data type
-                  (?:\^\^<([^>]*)>)
-                )?
-              )
-            )
-            "#
+          (?:_:([^\s]+))
         )
-        .unwrap();
-    }
-    let captures = RE
+
+        \s*
+
+        # predicate IRI
+        <([^>]*)>
+
+        \s*
+
+        # object
+        (?:
+
+          # IRI
+          (?:<([^>]*)>)
+
+          |
+
+          # Blank
+
+          (?:_:([^\s]+))
+
+          |
+
+          # literal
+          (?:
+
+            "([^"]*)"
+
+            # optional extra
+            (?:
+
+              # language
+              (?:@([a-zA-Z]+(?:-[a-zA-Z0-9]+)*))
+
+              |
+
+              # data type
+              (?:\^\^<([^>]*)>)
+            )?
+          )
+        )
+        "#
+    )
+    .unwrap();
+}
+
+pub fn parse<'a>(line: u64, input: &'a str, regex: &Regex) -> Statement<'a> {
+    let captures = regex
         .captures(input)
         .unwrap_or_else(|| panic!("Invalid line: {}: {:?}", line, input));
 
@@ -266,6 +267,8 @@ fn consume(
     labels: bool,
     statement_counts: bool,
 ) {
+    let regex = RE.clone();
+
     let lines_path = format!("{}.nt.bz2", name);
     let lines_file = File::create(&lines_path)
         .unwrap_or_else(|_| panic!("unable to create file: {}", &lines_path));
@@ -295,10 +298,11 @@ fn consume(
                 for line in lines {
                     handle(
                         &mut lines_encoder,
-                        &mut labels_encoder.as_mut(),
-                        &mut statement_counter.as_mut(),
+                        labels_encoder.as_mut(),
+                        statement_counter.as_mut(),
                         number,
                         line,
+                        &regex,
                     );
                 }
                 lines_encoder.flush().unwrap();
@@ -327,12 +331,13 @@ fn consume(
 
 fn handle<T: Write, U: Write>(
     lines_writer: &mut T,
-    labels_writer: &mut Option<&mut U>,
-    statement_counter: &mut Option<&mut HashMap<String, u64>>,
+    labels_writer: Option<&mut U>,
+    statement_counter: Option<&mut HashMap<String, u64>>,
     number: u64,
     line: String,
+    regex: &Regex,
 ) -> Option<()> {
-    let statement = parse(number, &line);
+    let statement = parse(number, &line, regex);
     maybe_write_line(lines_writer, &line, statement);
     let id = entity(statement.subject)?;
     maybe_count_statement(statement_counter, id, statement);
@@ -349,11 +354,11 @@ fn maybe_write_line<T: Write>(lines_writer: &mut T, line: &str, statement: State
 }
 
 fn maybe_write_label<T: Write>(
-    labels_writer: &mut Option<&mut T>,
+    labels_writer: Option<&mut T>,
     id: &str,
     statement: Statement,
 ) -> Option<()> {
-    let labels_writer = labels_writer.as_mut()?;
+    let labels_writer = labels_writer?;
     let label = label(statement)?;
     labels_writer
         .write_fmt(format_args!("{} {}\n", id, label))
@@ -362,11 +367,11 @@ fn maybe_write_label<T: Write>(
 }
 
 fn maybe_count_statement(
-    statement_counter: &mut Option<&mut HashMap<String, u64>>,
+    statement_counter: Option<&mut HashMap<String, u64>>,
     id: &str,
     statement: Statement,
 ) -> Option<()> {
-    let statement_counter = statement_counter.as_mut()?;
+    let statement_counter = statement_counter?;
     direct_property(statement.predicate)?;
     *statement_counter.entry(id.to_string()).or_insert(0) += 1;
     None
@@ -593,7 +598,7 @@ mod tests {
     fn test_literal_with_type() {
         let line = r#"<http://www.wikidata.org/entity/Q1644> <http://www.wikidata.org/prop/direct/P2043> "+1094.26"^^<http://www.w3.org/2001/XMLSchema#decimal> ."#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::IRI("http://www.wikidata.org/entity/Q1644"),
                 predicate: "http://www.wikidata.org/prop/direct/P2043",
@@ -609,7 +614,7 @@ mod tests {
     fn test_literal_with_lang() {
         let line = r#"<http://www.wikidata.org/entity/Q177> <http://schema.org/name> "pizza"@en ."#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::IRI("http://www.wikidata.org/entity/Q177"),
                 predicate: "http://schema.org/name",
@@ -622,7 +627,7 @@ mod tests {
     fn test_literal() {
         let line = r#"<http://www.wikidata.org/entity/Q177> <http://www.wikidata.org/prop/direct/P373> "Pizzas" ."#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::IRI("http://www.wikidata.org/entity/Q177"),
                 predicate: "http://www.wikidata.org/prop/direct/P373",
@@ -635,7 +640,7 @@ mod tests {
     fn test_blank_subject() {
         let line = r#"_:foo <bar> <baz>"#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::Blank("foo"),
                 predicate: "bar",
@@ -648,7 +653,7 @@ mod tests {
     fn test_blank_object() {
         let line = r#"<foo> <bar> _:baz"#;
         assert_eq!(
-            parse(1, line),
+            parse(1, line, &RE),
             Statement {
                 subject: Subject::IRI("foo"),
                 predicate: "bar",
@@ -682,10 +687,9 @@ mod tests {
             object: Object::IRI(""),
         };
         let mut counter = HashMap::new();
-        let counter_ref = &mut Some(&mut counter);
-        maybe_count_statement(counter_ref, "a", first);
-        maybe_count_statement(counter_ref, "b", second);
-        maybe_count_statement(counter_ref, "a", third);
+        maybe_count_statement(Some(&mut counter), "a", first);
+        maybe_count_statement(Some(&mut counter), "b", second);
+        maybe_count_statement(Some(&mut counter), "a", third);
         assert_eq!(counter.len(), 1);
         assert_eq!(counter.get("a"), Some(&2));
         assert_eq!(counter.get("b"), None);
@@ -695,11 +699,13 @@ mod tests {
     fn test_geo_literals() {
         assert!(is_acceptable(parse(
             1,
-            r#"<foo> <bar> "Point(4.6681 50.6411)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#
+            r#"<foo> <bar> "Point(4.6681 50.6411)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#,
+            &RE,
         )));
         assert!(!is_acceptable(parse(
             1,
-            r#"<foo> <bar> "<http://www.wikidata.org/entity/Q405> Point(-141.6 42.6)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#
+            r#"<foo> <bar> "<http://www.wikidata.org/entity/Q405> Point(-141.6 42.6)"^^<http://www.opengis.net/ont/geosparql#wktLiteral> ."#,
+            &RE,
         )));
     }
 
@@ -731,10 +737,11 @@ mod tests {
             line.push('\n');
             handle(
                 &mut lines_writer,
-                &mut Some(&mut labels_writer),
-                &mut None,
+                Some(&mut labels_writer),
+                None,
                 number,
                 line,
+                &RE,
             );
         }
 
