@@ -725,9 +725,13 @@ mod tests {
         in_path.push("test.in.rdf");
         let in_path = in_path.as_os_str().to_str().unwrap();
 
-        let mut out_path = PathBuf::from(dir);
-        out_path.push("test.out.rdf");
-        let out_path = out_path.as_os_str().to_str().unwrap();
+        let mut lines_out_path = PathBuf::from(dir);
+        lines_out_path.push("test.out.rdf");
+        let lines_out_path = lines_out_path.as_os_str().to_str().unwrap();
+
+        let mut labels_out_path = PathBuf::from(dir);
+        labels_out_path.push("test.out.labels");
+        let labels_out_path = labels_out_path.as_os_str().to_str().unwrap();
 
         let mut lines_writer = Vec::new();
         let mut labels_writer = Vec::new();
@@ -745,8 +749,11 @@ mod tests {
             );
         }
 
-        let expected = read_to_string(out_path).unwrap();
-        assert_eq!(String::from_utf8(lines_writer).unwrap(), expected);
+        let lines_expected = read_to_string(lines_out_path).unwrap();
+        assert_eq!(String::from_utf8(lines_writer).unwrap(), lines_expected);
+
+        let labels_expected = read_to_string(labels_out_path).unwrap();
+        assert_eq!(String::from_utf8(labels_writer).unwrap(), labels_expected);
 
         Ok(())
     }
